@@ -1,29 +1,103 @@
-// Utilidades para consumir el backend real de SaludGuard
+// Cliente HTTP para el backend de SaludGuard
+// Todas las rutas son relativas a /api — el proxy de Vite las redirige a http://localhost:4000
 
-const API_URL = process.env.REACT_APP_API_URL || 'http://localhost:4000/api';
+const BASE = '/api';
 
-export async function apiFetch<T>(endpoint: string, options: RequestInit = {}, token?: string): Promise<T> {
-  const headers: HeadersInit = {
+function getToken(): string | null {
+  return localStorage.getItem('SG_TOKEN');
+}
+
+async function request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  const token = getToken();
+  const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(token ? { Authorization: `Bearer ${token}` } : {})
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
   };
-  const res = await fetch(`${API_URL}${endpoint}`, {
+  const res = await fetch(`${BASE}${endpoint}`, {
     ...options,
-    headers: { ...headers, ...(options.headers || {}) }
+    headers: { ...headers, ...(options.headers as Record<string, string> ?? {}) },
   });
   if (!res.ok) {
-    const error = await res.json().catch(() => ({ error: 'Error desconocido' }));
-    throw new Error(error.error || 'Error en la petición');
+    const body = await res.json().catch(() => ({ error: 'Error desconocido' }));
+    throw new Error(body.error ?? `Error ${res.status}`);
   }
   return res.json();
 }
 
-// Ejemplo de login
-export async function login(email: string, password: string) {
-  return apiFetch<{ token: string; user: any }>('/auth/login', {
-    method: 'POST',
-    body: JSON.stringify({ email, password })
-  });
+// --- Auth ---
+export const authApi = {
+  login: (email: string, password: string) =>
+    request<{ token: string; user: BackendUser }>('/auth/login', {
+      method: 'POST',
+      body: JSON.stringify({ email, password }),
+    }),
+};
+
+// --- Tutelas ---
+export const tutelaApi = {
+  list: () => request<BackendTutela[]>('/tutelas'),
+  get: (id: string | number) => request<BackendTutela>(`/tutelas/${id}`),
+  create: (data: Partial<BackendTutela>) =>
+    request<BackendTutela>('/tutelas', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string | number, patch: Partial<BackendTutela>) =>
+    request<BackendTutela>(`/tutelas/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+  assign: (id: string | number, userId: string | number) =>
+    request<{ ok: boolean }>(`/tutelas/${id}/assign`, {
+      method: 'PATCH',
+      body: JSON.stringify({ userId }),
+    }),
+};
+
+// --- Usuarios ---
+export const userApi = {
+  list: () => request<BackendUser[]>('/users'),
+  create: (data: { name: string; email: string; password: string; role: string }) =>
+    request<BackendUser>('/users', { method: 'POST', body: JSON.stringify(data) }),
+  update: (id: string | number, patch: Partial<BackendUser & { status: string }>) =>
+    request<BackendUser>(`/users/${id}`, { method: 'PATCH', body: JSON.stringify(patch) }),
+};
+
+// --- Documentos ---
+export const documentApi = {
+  listByTutela: (tutelaId: string | number) =>
+    request<BackendDocument[]>(`/documents/tutela/${tutelaId}`),
+  create: (data: Partial<BackendDocument>) =>
+    request<BackendDocument>('/documents', { method: 'POST', body: JSON.stringify(data) }),
+};
+
+// ---- Tipos de respuesta del backend ----
+export interface BackendUser {
+  id: number;
+  name: string;
+  email: string;
+  role: string;
+  status: string;
 }
 
-// Otros endpoints pueden agregarse aquí (usuarios, tutelas, documentos, etc.)
+export interface BackendTutela {
+  id: number;
+  radicado: string;
+  paciente: string;
+  juzgado: string;
+  fechaNotificacion: string;
+  terminoRespuesta: string;
+  servicioSolicitado: string;
+  derechoVulnerado: string;
+  prioridad: string;
+  observaciones: string | null;
+  stage: string;
+  assignedToUserId: number | null;
+  receivedAt: string;
+}
+
+export interface BackendDocument {
+  id: number;
+  tutelaId: number | null;
+  fileName: string;
+  tipo: string | null;
+  sizeLabel: string | null;
+  status: string;
+  tags: string | null;
+  modifiedAt: string | null;
+  uploadedAt: string | null;
+}

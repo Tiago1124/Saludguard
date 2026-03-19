@@ -9,32 +9,51 @@ import styles from "./DashboardPage.module.scss";
 import { routes } from "../../router/routes";
 import { useNavigate } from "react-router-dom";
 
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: "Administrador",
+  EPS: "Abogado EPS",
+  LAWYER: "Abogado",
+};
+
 export default function DashboardPage() {
   const { state } = useAuth();
-  const { tutelas } = useTutelas();
+  const { tutelas, stageCount, priorityCount } = useTutelas();
   const nav = useNavigate();
   const user = state.user!;
 
   const metrics = useMemo(() => {
-    const assigned = user.role === "ABOGADO" ? tutelas.filter((t) => t.assignedToUserId === user.id).length : 18;
-    const pendientes = 5;
-    const docsSolic = 12;
-    const ganados = 11;
-    return { assigned, pendientes, docsSolic, ganados };
+    const assigned =
+      user.role === "LAWYER"
+        ? tutelas.filter((t) => t.assignedToUserId === user.id).length
+        : tutelas.length;
+    const pendientes = stageCount("RECEPCION") + stageCount("ANALISIS");
+    const enContestacion = stageCount("CONTESTACION");
+    const cerradas = stageCount("CERRADA") + stageCount("FALLO");
+    return { assigned, pendientes, enContestacion, cerradas };
   }, [tutelas, user]);
+
+  const criticalAlerts = useMemo(() => {
+    const now = Date.now();
+    return tutelas
+      .filter((t) => t.terminoRespuesta && t.stage !== "CERRADA" && t.stage !== "FALLO")
+      .map((t) => ({ ...t, horasRestantes: Math.round((new Date(t.terminoRespuesta).getTime() - now) / 36e5) }))
+      .filter((t) => t.horasRestantes <= 72)
+      .sort((a, b) => a.horasRestantes - b.horasRestantes)
+      .slice(0, 3);
+  }, [tutelas]);
 
   return (
     <div className={styles.page}>
       <div className={styles.title}>
-        Dashboard - {user.role === "ADMIN" ? "ADMIN" : user.role === "EPS" ? "ABOGADO EPS" : "EPS INTERNO"}
+        Dashboard — {ROLE_LABELS[user.role] ?? user.role}
       </div>
       <div className={styles.sub}>Bienvenido {user.fullName}, aquí tienes un resumen de tu actividad</div>
 
       <div className={styles.stats}>
-        <StatCard title="Tutelas Asignadas" value={metrics.assigned} iconTone="info" />
-        <StatCard title="Contestaciones Pendientes" value={metrics.pendientes} iconTone="warning" />
-        <StatCard title="Documentos Solicitados" value={metrics.docsSolic} iconTone="info" />
-        <StatCard title="Casos Ganados" value={metrics.ganados} iconTone="success" />
+        <StatCard title="Tutelas Activas" value={metrics.assigned} iconTone="info" />
+        <StatCard title="Pendientes de Respuesta" value={metrics.pendientes} iconTone="warning" />
+        <StatCard title="En Contestación" value={metrics.enContestacion} iconTone="info" />
+        <StatCard title="Resueltas" value={metrics.cerradas} iconTone="success" />
       </div>
 
       <Card className={styles.quick}>
@@ -44,37 +63,52 @@ export default function DashboardPage() {
         <div className={styles.quickGrid}>
           <button className={styles.quickBtn} onClick={() => nav(routes.recepcion)}>
             <div className={styles.quickIcon} />
+            <div className={styles.quickText}>Registrar Tutela</div>
+          </button>
+          <button className={styles.quickBtn} onClick={() => nav(routes.analisis)}>
+            <div className={styles.quickIcon} />
             <div className={styles.quickText}>Analizar Casos</div>
           </button>
           <button className={styles.quickBtn} onClick={() => nav(routes.contestaciones)}>
             <div className={styles.quickIcon} />
             <div className={styles.quickText}>Redactar Contestación</div>
           </button>
-          <button className={styles.quickBtn} onClick={() => nav(routes.documental)}>
-            <div className={styles.quickIcon} />
-            <div className={styles.quickText}>Solicitar Documentos</div>
-          </button>
         </div>
       </Card>
 
       <Card className={styles.alerts}>
-        <div className={styles.blockTitle}>Alertas Recientes</div>
-
-        <div className={styles.alertRowDanger}>
-          <div>
-            <div className={styles.alertTitle}>Tutela próxima a vencer</div>
-            <div className={styles.alertSub}>Radicado 2024-001 vence en 2 horas</div>
-          </div>
-          <Badge tone="danger">Crítico</Badge>
+        <div className={styles.blockTitle}>
+          Alertas de Vencimiento
+          {criticalAlerts.length > 0 && (
+            <span style={{ marginLeft: 8 }}><Badge tone="danger">{criticalAlerts.length}</Badge></span>
+          )}
         </div>
 
-        <div className={styles.alertRowWarn}>
-          <div>
-            <div className={styles.alertTitle}>Nueva tutela recibida</div>
-            <div className={styles.alertSub}>Radicado 2024-045 requiere análisis</div>
+        {criticalAlerts.length === 0 ? (
+          <div style={{ padding: "16px 20px", color: "#64748b", fontSize: 13, fontWeight: 600 }}>
+            No hay tutelas próximas a vencer. ✓
           </div>
-          <Badge tone="neutral">Pendiente</Badge>
-        </div>
+        ) : (
+          criticalAlerts.map((t) => (
+            <div
+              key={t.id}
+              className={t.horasRestantes <= 0 ? styles.alertRowDanger : styles.alertRowWarn}
+            >
+              <div>
+                <div className={styles.alertTitle}>{t.radicado} — {t.paciente}</div>
+                <div className={styles.alertSub}>
+                  {t.horasRestantes <= 0
+                    ? `Vencida hace ${Math.abs(t.horasRestantes)} horas`
+                    : `Vence en ${t.horasRestantes} horas`}
+                  {" · "}{t.servicioSolicitado}
+                </div>
+              </div>
+              <Badge tone={t.horasRestantes <= 0 ? "danger" : t.horasRestantes <= 24 ? "danger" : "warning"}>
+                {t.horasRestantes <= 0 ? "Vencida" : priorityCount("CRITICA") > 0 && t.prioridad === "CRITICA" ? "Crítico" : "Urgente"}
+              </Badge>
+            </div>
+          ))
+        )}
 
         <div className={styles.alertActions}>
           <Button variant="outline" onClick={() => nav(routes.alertas)}>Ver Centro de Alertas</Button>

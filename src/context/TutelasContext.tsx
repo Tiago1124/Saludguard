@@ -1,98 +1,108 @@
-import React, { createContext, useContext, useMemo, useState } from "react";
+import React, {
+  createContext, useCallback, useContext, useEffect, useMemo, useState
+} from "react";
 import type { DocumentItem, TutelaCase, TutelaPriority, TutelaStage } from "../types/tutela";
-import { readJSON, uid, writeJSON } from "../utils/storage";
-import { seedDocs, seedTutelas } from "../data/seed";
+import { tutelaApi, type BackendTutela } from "../utils/api";
 
 type TutelasContextValue = {
   tutelas: TutelaCase[];
   docs: DocumentItem[];
-  createTutela: (payload: Omit<TutelaCase, "id" | "receivedAt" | "stage">) => void;
-  updateTutela: (id: string, patch: Partial<TutelaCase>) => void;
-  assignTutela: (tutelaId: string, userId: string) => void;
-  selfAssignTutela: (tutelaId: string, userId: string) => void;
-
-  // utilidades para reportes/estadísticas
+  isLoading: boolean;
+  createTutela: (payload: Omit<TutelaCase, "id" | "receivedAt" | "stage">) => Promise<void>;
+  updateTutela: (id: string, patch: Partial<TutelaCase>) => Promise<void>;
+  assignTutela: (tutelaId: string, userId: string) => Promise<void>;
+  selfAssignTutela: (tutelaId: string, userId: string) => Promise<void>;
   countBy: (predicate: (t: TutelaCase) => boolean) => number;
   stageCount: (stage: TutelaStage) => number;
   priorityCount: (p: TutelaPriority) => number;
 };
 
-const LS_TUTELAS = "SG_TUTELAS";
-const LS_DOCS = "SG_DOCS";
+function mapTutela(t: BackendTutela): TutelaCase {
+  return {
+    id: String(t.id),
+    radicado: t.radicado ?? "",
+    paciente: t.paciente ?? "",
+    juzgado: t.juzgado ?? "",
+    fechaNotificacion: t.fechaNotificacion ?? t.receivedAt ?? "",
+    terminoRespuesta: t.terminoRespuesta ?? "",
+    servicioSolicitado: t.servicioSolicitado ?? "",
+    derechoVulnerado: t.derechoVulnerado ?? "",
+    prioridad: (t.prioridad ?? "MEDIA") as TutelaPriority,
+    observaciones: t.observaciones ?? undefined,
+    stage: (t.stage ?? "RECEPCION") as TutelaStage,
+    assignedToUserId: t.assignedToUserId != null ? String(t.assignedToUserId) : undefined,
+    receivedAt: t.receivedAt ?? new Date().toISOString(),
+  };
+}
 
 const TutelasContext = createContext<TutelasContextValue | null>(null);
 
 export function TutelasProvider({ children }: { children: React.ReactNode }) {
-  const [tutelas, setTutelas] = useState<TutelaCase[]>(() => {
-    const cur = readJSON<TutelaCase[]>(LS_TUTELAS, []);
-    if (cur.length === 0) {
-      writeJSON(LS_TUTELAS, seedTutelas);
-      return seedTutelas;
+  const [tutelas, setTutelas] = useState<TutelaCase[]>([]);
+  const [docs] = useState<DocumentItem[]>([]);
+  const [isLoading, setIsLoading] = useState(false);
+
+  const fetchTutelas = useCallback(async () => {
+    const hasToken = Boolean(localStorage.getItem("SG_TOKEN"));
+    if (!hasToken) return;
+    try {
+      setIsLoading(true);
+      const data = await tutelaApi.list();
+      setTutelas(data.map(mapTutela));
+    } catch {
+      // token inválido o backend caído — ignorar silenciosamente
+    } finally {
+      setIsLoading(false);
     }
-    return cur;
-  });
+  }, []);
 
-  const [docs, setDocs] = useState<DocumentItem[]>(() => {
-    const cur = readJSON<DocumentItem[]>(LS_DOCS, []);
-    if (cur.length === 0) {
-      writeJSON(LS_DOCS, seedDocs);
-      return seedDocs;
-    }
-    return cur;
-  });
+  useEffect(() => {
+    fetchTutelas();
 
-  const persistTutelas = (next: TutelaCase[]) => {
-    setTutelas(next);
-    writeJSON(LS_TUTELAS, next);
-  };
-
-  const createTutela: TutelasContextValue["createTutela"] = (payload) => {
-    const next: TutelaCase = {
-      ...payload,
-      id: uid("t_"),
-      receivedAt: new Date().toISOString(),
-      stage: "RECEPCION"
+    const onLogin = () => fetchTutelas();
+    const onLogout = () => setTutelas([]);
+    window.addEventListener("sg:auth:login", onLogin);
+    window.addEventListener("sg:auth:logout", onLogout);
+    return () => {
+      window.removeEventListener("sg:auth:login", onLogin);
+      window.removeEventListener("sg:auth:logout", onLogout);
     };
-    persistTutelas([next, ...tutelas]);
+  }, [fetchTutelas]);
+
+  const createTutela = async (payload: Omit<TutelaCase, "id" | "receivedAt" | "stage">) => {
+    const created = await tutelaApi.create(payload as Partial<BackendTutela>);
+    setTutelas(prev => [mapTutela(created), ...prev]);
   };
 
-  const updateTutela: TutelasContextValue["updateTutela"] = (id, patch) => {
-    persistTutelas(tutelas.map((t) => (t.id === id ? { ...t, ...patch } : t)));
+  const updateTutela = async (id: string, patch: Partial<TutelaCase>) => {
+    const updated = await tutelaApi.update(id, patch as Partial<BackendTutela>);
+    setTutelas(prev => prev.map(t => t.id === id ? mapTutela(updated) : t));
   };
 
-  const assignTutela: TutelasContextValue["assignTutela"] = (tutelaId, userId) => {
-    persistTutelas(tutelas.map((t) => (t.id === tutelaId ? { ...t, assignedToUserId: userId } : t)));
-  };
-
-  const selfAssignTutela: TutelasContextValue["selfAssignTutela"] = (tutelaId, userId) => {
-    persistTutelas(
-      tutelas.map((t) =>
-        t.id === tutelaId
-          ? t.assignedToUserId
-            ? t // si ya está asignada, no cambia (regla simple)
-            : { ...t, assignedToUserId: userId }
-          : t
-      )
+  const assignTutela = async (tutelaId: string, userId: string) => {
+    await tutelaApi.assign(tutelaId, userId);
+    setTutelas(prev =>
+      prev.map(t => t.id === tutelaId ? { ...t, assignedToUserId: userId } : t)
     );
   };
 
+  const selfAssignTutela = async (tutelaId: string, userId: string) => {
+    const tutela = tutelas.find(t => t.id === tutelaId);
+    if (tutela?.assignedToUserId) return;
+    await assignTutela(tutelaId, userId);
+  };
+
   const countBy = (predicate: (t: TutelaCase) => boolean) => tutelas.filter(predicate).length;
-  const stageCount = (stage: TutelaStage) => tutelas.filter((t) => t.stage === stage).length;
-  const priorityCount = (p: TutelaPriority) => tutelas.filter((t) => t.prioridad === p).length;
+  const stageCount = (stage: TutelaStage) => tutelas.filter(t => t.stage === stage).length;
+  const priorityCount = (p: TutelaPriority) => tutelas.filter(t => t.prioridad === p).length;
 
   const value = useMemo(
     () => ({
-      tutelas,
-      docs,
-      createTutela,
-      updateTutela,
-      assignTutela,
-      selfAssignTutela,
-      countBy,
-      stageCount,
-      priorityCount
+      tutelas, docs, isLoading,
+      createTutela, updateTutela, assignTutela, selfAssignTutela,
+      countBy, stageCount, priorityCount,
     }),
-    [tutelas, docs]
+    [tutelas, docs, isLoading]
   );
 
   return <TutelasContext.Provider value={value}>{children}</TutelasContext.Provider>;

@@ -12,9 +12,10 @@ export default defineConfig({
     port: 5173,
     proxy: {
       '/api': {
-        target: 'http://localhost:4000',
+        // En Docker: VITE_API_TARGET=http://backend:4000
+        target: process.env.VITE_API_TARGET || 'http://localhost:4000',
         changeOrigin: true,
-        secure: false
+        secure: false,
       }
     }
   }

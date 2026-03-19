@@ -1,56 +1,79 @@
 import React, { createContext, useContext, useMemo, useState } from "react";
 import type { AuthState, User } from "../types/auth";
-import { readJSON, writeJSON } from "../utils/storage";
-import { seedUsers } from "../data/seed";
+import { authApi } from "../utils/api";
+
+const LS_TOKEN = "SG_TOKEN";
+const LS_USER = "SG_USER";
 
 type AuthContextValue = {
   state: AuthState;
-  login: (email: string, password: string) => { ok: boolean; error?: string };
+  token: string | null;
+  login: (email: string, password: string) => Promise<{ ok: boolean; error?: string }>;
   logout: () => void;
 };
 
-const LS_USERS = "SG_USERS";
-const LS_AUTH = "SG_AUTH";
-
-function hash(p: string) {
-  return `demo_hash_${p}`;
+function buildAvatarInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  const a = parts[0]?.[0] ?? "U";
+  const b = parts[1]?.[0] ?? parts[0]?.[1] ?? "X";
+  return (a + b).toUpperCase();
 }
 
-function ensureUsersSeeded() {
-  const existing = readJSON<User[]>(LS_USERS, []);
-  if (existing.length === 0) writeJSON<User[]>(LS_USERS, seedUsers);
+function mapBackendUser(u: { id: number; name: string; email: string; role: string; status: string }): User {
+  return {
+    id: String(u.id),
+    fullName: u.name,
+    email: u.email,
+    role: u.role as User["role"],
+    status: u.status === "INACTIVE" ? "FROZEN" : (u.status as User["status"]),
+    avatarInitials: buildAvatarInitials(u.name),
+    passwordHash: "",
+  };
 }
 
 const AuthContext = createContext<AuthContextValue | null>(null);
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
-  ensureUsersSeeded();
+  const [token, setToken] = useState<string | null>(() => localStorage.getItem(LS_TOKEN));
 
   const [state, setState] = useState<AuthState>(() => {
-    const saved = readJSON<AuthState>(LS_AUTH, { user: null });
-    return saved;
+    try {
+      const raw = localStorage.getItem(LS_USER);
+      if (raw) return { user: JSON.parse(raw) as User };
+    } catch {
+      // ignore
+    }
+    return { user: null };
   });
 
-  const login: AuthContextValue["login"] = (email, password) => {
-    const users = readJSON<User[]>(LS_USERS, []);
-    const u = users.find((x) => x.email.toLowerCase() === email.toLowerCase());
+  const login: AuthContextValue["login"] = async (email, password) => {
+    try {
+      const { token: t, user: u } = await authApi.login(email, password);
+      const user = mapBackendUser(u);
 
-    if (!u || u.status !== "ACTIVE") return { ok: false, error: "Credenciales inválidas." };
-    if (u.passwordHash !== hash(password)) return { ok: false, error: "Credenciales inválidas." };
+      localStorage.setItem(LS_TOKEN, t);
+      localStorage.setItem(LS_USER, JSON.stringify(user));
+      setToken(t);
+      setState({ user });
 
-    const next = { user: u };
-    setState(next);
-    writeJSON(LS_AUTH, next);
-    return { ok: true };
+      // Notifica a los demás contextos que hay sesión nueva
+      window.dispatchEvent(new CustomEvent("sg:auth:login"));
+      return { ok: true };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Credenciales inválidas.";
+      return { ok: false, error: msg };
+    }
   };
 
   const logout = () => {
-    const next = { user: null };
-    setState(next);
-    writeJSON(LS_AUTH, next);
+    localStorage.removeItem(LS_TOKEN);
+    localStorage.removeItem(LS_USER);
+    setToken(null);
+    setState({ user: null });
+    window.dispatchEvent(new CustomEvent("sg:auth:logout"));
   };
 
-  const value = useMemo(() => ({ state, login, logout }), [state]);
+  const value = useMemo(() => ({ state, token, login, logout }), [state, token]);
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
 }

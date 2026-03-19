@@ -1,5 +1,6 @@
-export type Role = "ADMIN" | "EPS" | "ABOGADO";
+export type Role = "ADMIN" | "EPS" | "LAWYER";
 
+// FROZEN = inactivo temporalmente, DELETED = eliminado (soft)
 export type UserStatus = "ACTIVE" | "FROZEN" | "DELETED";
 
 export interface User {
@@ -8,8 +9,8 @@ export interface User {
   email: string;
   role: Role;
   status: UserStatus;
-  avatarInitials: string; // ej: "DMG"
-  passwordHash: string; // demo (no real)
+  avatarInitials: string;
+  passwordHash: string; // vacío en sesión real (solo referencia interna)
 }
 
 export interface AuthState {

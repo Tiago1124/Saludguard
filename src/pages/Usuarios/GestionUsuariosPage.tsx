@@ -6,29 +6,52 @@ import Button from "../../components/ui/Button";
 import Badge from "../../components/ui/Badge";
 import styles from "./GestionUsuariosPage.module.scss";
 import { useUsers } from "../../context/UsersContext";
+import type { Role } from "../../types/auth";
+
+const ROLE_LABELS: Record<string, string> = {
+  ADMIN: "Admin",
+  EPS: "EPS",
+  LAWYER: "Abogado",
+};
 
 export default function GestionUsuariosPage() {
   const { users, addUser, setStatus } = useUsers();
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
-  const [role, setRole] = useState<"ADMIN" | "EPS" | "ABOGADO">("ABOGADO");
+  const [role, setRole] = useState<Role>("LAWYER");
   const [password, setPassword] = useState("");
   const [err, setErr] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [success, setSuccess] = useState(false);
 
   const visible = useMemo(() => users.filter((u) => u.status !== "DELETED"), [users]);
 
-  const onCreate = () => {
+  const onCreate = async () => {
     setErr(null);
-    const res = addUser({ fullName, email, role, password: password || "demo123" });
-    if (!res.ok) return setErr(res.error ?? "No fue posible crear el usuario.");
-    setFullName(""); setEmail(""); setPassword("");
+    setSuccess(false);
+    if (!fullName.trim() || !email.trim()) {
+      setErr("Nombre y correo son obligatorios.");
+      return;
+    }
+    setLoading(true);
+    const res = await addUser({ fullName, email, role, password: password || "demo123" });
+    setLoading(false);
+    if (!res.ok) {
+      setErr(res.error ?? "No fue posible crear el usuario.");
+      return;
+    }
+    setSuccess(true);
+    setFullName("");
+    setEmail("");
+    setPassword("");
+    setTimeout(() => setSuccess(false), 3000);
   };
 
   return (
     <div className={styles.page}>
       <div className={styles.title}>Gestión de Usuarios</div>
-      <div className={styles.sub}>Crear, congelar o eliminar usuarios (EPS / Admin)</div>
+      <div className={styles.sub}>Crear, congelar o eliminar usuarios del sistema</div>
 
       <div className={styles.grid}>
         <Card className={styles.formCard}>
@@ -36,23 +59,26 @@ export default function GestionUsuariosPage() {
           <div className={styles.blockSub}>Complete los campos para crear un usuario</div>
 
           <div className={styles.form}>
-            <Input label="Nombre completo" value={fullName} onChange={(e) => setFullName(e.target.value)} />
-            <Input label="Correo" value={email} onChange={(e) => setEmail(e.target.value)} />
-            <Select label="Rol" value={role} onChange={(e) => setRole(e.target.value as any)}>
-              <option value="ABOGADO">Abogado</option>
+            <Input label="Nombre completo *" value={fullName} onChange={(e) => setFullName(e.target.value)} />
+            <Input label="Correo *" value={email} onChange={(e) => setEmail(e.target.value)} />
+            <Select label="Rol" value={role} onChange={(e) => setRole(e.target.value as Role)}>
+              <option value="LAWYER">Abogado</option>
               <option value="EPS">EPS</option>
               <option value="ADMIN">Admin</option>
             </Select>
-            <Input label="Contraseña (demo)" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Input label="Contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="Si queda vacío se usa 'demo123'" />
 
-            {err ? <div className={styles.err}>{err}</div> : null}
+            {err && <div className={styles.err}>{err}</div>}
+            {success && <div style={{ color: "#16a34a", fontWeight: 700, fontSize: 13 }}>✓ Usuario creado exitosamente</div>}
 
-            <Button onClick={onCreate}>Crear Usuario</Button>
+            <Button onClick={onCreate} disabled={loading}>
+              {loading ? "Creando…" : "Crear Usuario"}
+            </Button>
           </div>
         </Card>
 
         <Card className={styles.listCard}>
-          <div className={styles.blockTitle}>Usuarios</div>
+          <div className={styles.blockTitle}>Usuarios ({visible.length})</div>
           <div className={styles.table}>
             <div className={styles.thead}>
               <div>Nombre</div>
@@ -69,7 +95,7 @@ export default function GestionUsuariosPage() {
                   <div className={styles.nameText}>{u.fullName}</div>
                 </div>
                 <div className={styles.muted}>{u.email}</div>
-                <div><Badge tone="info">{u.role}</Badge></div>
+                <div><Badge tone="info">{ROLE_LABELS[u.role] ?? u.role}</Badge></div>
                 <div>
                   <Badge tone={u.status === "ACTIVE" ? "success" : "warning"}>
                     {u.status === "ACTIVE" ? "Activo" : "Congelado"}
