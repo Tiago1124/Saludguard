@@ -1,7 +1,0 @@
-{
-  "permissions": {
-    "allow": [
-      "Bash(powershell.exe -Command \"Start-Sleep 8; Get-Content 'C:\\\\Users\\\\santi\\\\AppData\\\\Local\\\\Temp\\\\claude\\\\C--Users-santi-saludguard\\\\a7a0e718-f6e5-4493-829d-58cf0d3b8a01\\\\tasks\\\\bbsus5v1e.output' -ErrorAction SilentlyContinue | Select-Object -Last 30\" 2>&1)"
-    ]
-  }
-}
